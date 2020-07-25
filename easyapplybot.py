@@ -1,25 +1,25 @@
-import time, random, os, csv, platform
-from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import TimeoutException
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium import webdriver
+import csv
+import json
+import logging
+import os
+import random
+import re
+import time
+from datetime import datetime, timedelta
 
-from bs4 import BeautifulSoup
 import pandas as pd
 import pyautogui
-
-from urllib.request import urlopen
-from webdriver_manager.chrome import ChromeDriverManager
-import re
-import yaml
-import json
-from datetime import datetime, timedelta
-import logging
-
 import win32com.client as comctl
+import yaml
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+from webdriver_manager.chrome import ChromeDriverManager
 
 wsh = comctl.Dispatch("WScript.Shell")
 
@@ -190,7 +190,7 @@ class EasyApplyBot:
 
 				# get easy apply button
 				button = self.get_easy_apply_button()
-				if button is not False:
+				if button :
 					log.info("It appears that the apply button is considered an EASY apply")
 					#TODO Need to confirm that its an easy apply button by checking the URL is still linkedin URL and not a redirect
 					string_easy = "* has Easy Apply Button"
@@ -216,7 +216,7 @@ class EasyApplyBot:
 					result = False
 
 				position_number = str(count_job + jobs_per_page)
-				log.info(f"Position {position_number}:\n {self.browser.title} \n {string_easy} \n")
+				log.info(f"\nSuccess?: {result} \n Position {position_number}\n {self.browser.title} \n {string_easy} \n {job}")
 
 				self.write_to_file(button, jobID, self.browser.title, result)
 
@@ -295,9 +295,10 @@ class EasyApplyBot:
 
 		try:
 
-			time.sleep(3)
-			log.info("Attempting to send resume")
-			#TODO These locators are not future proof. These labels could easily change. Ideally we would search for contained text;
+			time.sleep(random.uniform(2.2, 4.3))
+			log.info("Attempting to apply")
+			#TODO These locators are not future proof. These labels could easily change.
+			# Ideally we would search for contained text;
 			# was unable to get it to work using XPATH and searching for contained text
 			upload_locator = (By.CSS_SELECTOR, "label[aria-label='DOC, DOCX, PDF formats only (2 MB).']")
 			next_locator = (By.CSS_SELECTOR, "button[aria-label='Continue to next step']")
@@ -307,11 +308,10 @@ class EasyApplyBot:
 			error_locator = (By.CSS_SELECTOR, "p[data-test-form-element-error-message='true']")
 			cover_letter = (By.CSS_SELECTOR, "input[name='file']")
 
-
-			testLabel_locator = (By.XPATH, "//span[@data-test-form-element-label-title='true']")
-			yes_locator = (By.XPATH, "//input[@value='Yes']")
-			no_locator = (By.XPATH, "//input[@value='No']")
-			textInput_locator = (By.XPATH, "//input[@type='text']")
+			question_locator = (By.XPATH, ".//div[@class='jobs-easy-apply-form-section__grouping']")
+			yes_locator = (By.XPATH, ".//input[@value='Yes']")
+			no_locator = (By.XPATH, ".//input[@value='No']")
+			textInput_locator = (By.XPATH, ".//input[@type='text']")
 
 
 			submitted = False
@@ -319,12 +319,14 @@ class EasyApplyBot:
 			while not submitted:
 				button = None
 
-				# Upload Cover Letter if possible
+				# Upload  if possible
 
+				#TODO Should check if there is already a resume that is saved from the last time the application was attempted.
+				# If so, then remove and re upload it in case there is new version.
 				if is_present(upload_locator):
-
-					input_buttons = self.browser.find_elements(upload_locator[0],
-															 upload_locator[1])
+					log.info("Resume upload option available. Attempting to upload.")
+					input_buttons = self.browser.find_elements(cover_letter[0],
+															 cover_letter[1])
 					for input_button in input_buttons:
 						parent = input_button.find_element(By.XPATH, "..")
 						sibling = parent.find_element(By.XPATH, "preceding-sibling::*")
@@ -333,18 +335,20 @@ class EasyApplyBot:
 							if key in sibling.text or key in grandparent.text:
 								input_button.send_keys(self.uploads[key])
 
-
-					#input_button[0].send_keys(self.cover_letter_loctn)
-
-					time.sleep(random.uniform(4.5, 6.5))
-
 				for i, button_locator in enumerate(
 						[upload_locator, next_locator, review_locator, submit_locator, submit_application_locator]):
+
+					#Sleep every iteration so that the bot is harded to detect.
+					time.sleep(random.uniform(2.2, 4.3))
 
 					log.info("Searching for button locator: %s", str(button_locator))
 					if is_present(button_locator):
 						log.info("button found with this locator: %s", str(button_locator))
-						button = self.wait.until(EC.element_to_be_clickable(button_locator))
+						try:
+							button = self.wait.until(EC.element_to_be_clickable(button_locator))
+						except TimeoutException:
+							log.exception("Timed out waiting for button %s ", button_locator)
+							continue
 					else:
 						log.info("Unable to find button locator: %s", str(button_locator))
 						continue
@@ -360,33 +364,41 @@ class EasyApplyBot:
 
 								#TODO these questions will need to be logged so that way, individuals can look through the logs and add them at the end of an application run.
 								#Required question expects an answer. Search through possible questions/answer combos
-								if is_present(testLabel_locator) and attemptQuestions:
-									for testLabelElement in self.browser.find_elements(testLabel_locator[0],
-																			  testLabel_locator[1]):
+								if is_present(question_locator) and attemptQuestions:
+									questionSections = self.browser.find_elements(question_locator[0], question_locator[1])
+									for questionElement in questionSections:
 										try:
-											log.info("Found test element %s", testLabel_locator)
-											text = testLabelElement.text
-											log.info("test element text: %s", text)
+											log.info("Found test element %s", questionElement)
+											text = questionElement.text
+											log.warning("Question Text: %s", text)
 											#assuming this question is asking if I am authorized to work in the US
 											if ("Are you" in text and "authorized" in text) or ("Have You" in text and "education" in text):
 												#Be sure to find the child element of the current test question section
-												yesRadio = testLabelElement.find_element(By.XPATH, yes_locator[1])
+												yesRadio = questionElement.find_element(By.XPATH, yes_locator[1])
 												time.sleep(1)
 												log.info("Attempting to click the radio button for %s", yes_locator)
 												self.browser.execute_script("arguments[0].click()", yesRadio)
 												log.info("Clicked the radio button %s", yes_locator)
 
 											#assuming this question is asking if I require sponsorship
-											if "require" in text and "sponsorship" in text:
-												noRadio = testLabelElement.find_element(By.XPATH, no_locator[1])
+											elif "require" in text and "sponsorship" in text:
+												noRadio = questionElement.find_element(By.XPATH, no_locator[1])
 												time.sleep(1)
 												log.info("Attempting to click the radio button for %s", no_locator)
 												self.browser.execute_script("arguments[0].click()", noRadio)
 												log.info("Clicked the radio button %s", no_locator)
 
 											# assuming this question is asking if I have a Bachelor's degree
-											if "you have" in text and "Bachelor's" in text:
-												yesRadio = testLabelElement.find_element(By.XPATH, yes_locator[1])
+											elif (("You have" in text) or ("Have you" in text)) and "Bachelor's" in text:
+												yesRadio = questionElement.find_element(By.XPATH, yes_locator[1])
+												time.sleep(1)
+												log.info("Attempting to click the radio button for %s", yes_locator)
+												self.browser.execute_script("arguments[0].click()", yesRadio)
+												log.info("Clicked the radio button %s", yes_locator)
+
+											# assuming this question is asking if I have a Master's degree
+											elif (("You have" in text) or ("Have you" in text)) and "Master's" in text:
+												yesRadio = questionElement.find_element(By.XPATH, yes_locator[1])
 												time.sleep(1)
 												log.info("Attempting to click the radio button for %s", yes_locator)
 												self.browser.execute_script("arguments[0].click()", yesRadio)
@@ -396,8 +408,8 @@ class EasyApplyBot:
 											#TODO Need to add a configuration file with all the answer for these questions versus having them hardcoded.
 											#Some questions are asking how many years of experience you have in a specific skill
 											#Automatically put the number of years that I have worked.
-											if "How many years" in text and "experience" in text:
-												textField = testLabelElement.find_element(By.XPATH, textInput_locator[1])
+											elif "How many years" in text and "experience" in text:
+												textField = questionElement.find_element(By.XPATH, textInput_locator[1])
 												time.sleep(1)
 												log.info("Attempting to click the text field for %s", textInput_locator)
 												self.browser.execute_script("arguments[0].click()", textField)
@@ -408,22 +420,23 @@ class EasyApplyBot:
 												log.info("Sent keys to the text field %s", textInput_locator)
 
 											#This should be updated to match the language you speak.
-											if "Do you" in text and "speak" in text:
+											elif "Do you" in text and "speak" in text:
 												if "English" in text:
-													yesRadio = testLabelElement.find_element(By.XPATH, yes_locator[1])
+													yesRadio = questionElement.find_element(By.XPATH, yes_locator[1])
 													time.sleep(1)
 													log.info("Attempting to click the radio button for %s", yes_locator)
 													self.browser.execute_script("arguments[0].click()", yesRadio)
 													log.info("Clicked the radio button %s", yes_locator)
 												#if not english then say no.
 												else:
-													noRadio = testLabelElement.find_element(By.XPATH, no_locator[1])
+													noRadio = questionElement.find_element(By.XPATH, no_locator[1])
 													time.sleep(1)
 													log.info("Attempting to click the radio button for %s", no_locator)
 													self.browser.execute_script("arguments[0].click()", noRadio)
 													log.info("Clicked the radio button %s", no_locator)
 
-
+											else:
+												log.warning("Unable to find question in my tiny database")
 
 										except Exception as e:
 											log.exception("Could not answer additional questions: %s", e)
@@ -440,7 +453,7 @@ class EasyApplyBot:
 						if button_locator == upload_locator:
 							log.info("Uploading resume now")
 
-							time.sleep(2)
+							time.sleep(random.uniform(2.2, 4.3))
 							driver.execute_script("arguments[0].click()", button)
 
 							#TODO This can only handle Chrome right now. Firefox or other browsers will need to be handled separately
@@ -452,13 +465,14 @@ class EasyApplyBot:
 							wsh.SendKeys(str(self.resume_loctn))
 							time.sleep(1)
 							wsh.SendKeys("{ENTER}")
+							log.info("Just finished using button %s ", button_locator)
 
 						else:
 							try:
 								log.info("attempting to click button: %s", str(button_locator))
 								response = button.click()
 								if (button_locator == submit_locator) or (button_locator == submit_application_locator):
-									log.info("Clicked the submit button. RESPONSE: %s", str(response))
+									log.info("Clicked the submit button.")
 									submitted = True
 									return submitted
 							except EC.StaleElementReferenceException:
@@ -468,9 +482,7 @@ class EasyApplyBot:
 							log.warning("Unable to submit. It appears none of the buttons were found.")
 							break
 
-						randoTime = random.uniform(1.5, 2.5)
-						log.info("Just finished using button %s ; Im going to sleep for %s ;", str(button_locator), randoTime)
-						time.sleep(randoTime)
+
 
 			# After submitting the application, a dialog shows up, we need to close this dialog
 			close_button_locator = (By.CSS_SELECTOR, "button[aria-label='Dismiss']")
@@ -528,12 +540,12 @@ def setupLogger():
 	if not os.path.isdir('./logs'):
 		os.mkdir('./logs')
 
-	logging.basicConfig(filename=('./logs/' + str(dt)+'applyJobs.log'), filemode='w', format='%(name)s::%(levelname)s::%(message)s', datefmt='./logs/%d-%b-%y %H:%M:%S') #TODO need to check if there is a log dir available or not
-
+	# TODO need to check if there is a log dir available or not
+	logging.basicConfig(filename=('./logs/' + str(dt)+'applyJobs.log'), filemode='w', format='%(asctime)s::%(name)s::%(levelname)s::%(message)s', datefmt='./logs/%d-%b-%y %H:%M:%S')
 	log.setLevel(logging.DEBUG)
 	c_handler = logging.StreamHandler()
 	c_handler.setLevel(logging.DEBUG)
-	c_format = logging.Formatter('%(name)s::%(levelname)s::%(lineno)d- %(message)s')
+	c_format = logging.Formatter('%(asctime)s::%(name)s::%(levelname)s::%(lineno)d- %(message)s')
 	c_handler.setFormatter(c_format)
 	log.addHandler(c_handler)
 
