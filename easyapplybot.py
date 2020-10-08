@@ -1,6 +1,7 @@
 import csv
 import json
 import logging
+import logging.config
 import os
 import random
 import re
@@ -24,7 +25,84 @@ from application import application
 wsh = comctl.Dispatch("WScript.Shell")
 
 log = logging.getLogger(__name__)
-driver = webdriver.Chrome(ChromeDriverManager().install())
+driver = webdriver.Chrome(executable_path=ChromeDriverManager().install())
+selenLog = logging.getLogger('selenium.webdriver.remote.remote_connection')
+selenLog.setLevel(logging.ERROR)
+selenLog = logging.getLogger('urllib3.connectionpool')
+selenLog.setLevel(logging.ERROR)
+
+
+def setup_loggers():
+    if not os.path.isdir('./logs'):
+        os.mkdir('./logs')
+
+    # TODO need to set up the logger so that the time stamp is synced with the report.
+    dt = datetime.strftime(datetime.now(), "%m_%d_%y %H_%M_%S ")
+    logfile = './logs/' + str(dt)+'sync.log'
+    #logfile = str(dt) + 'sync.log'
+
+    LOGGING_CONFIG = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'standard': {
+                'format': '%(asctime)s:[%(levelname)s]:%(name)s:%(lineno)d-: %(message)s'
+            },
+            'state machine': {
+                'format': '%(asctime)s:[%(levelname)s]:%(name)s:%(lineno)d-: %(message)s'
+            }
+        },
+        'handlers': {
+            'default stream': {
+                'level': 'DEBUG',
+                'formatter': 'standard',
+                'class': 'logging.StreamHandler',
+                'stream': 'ext://sys.stdout',  # Default is stderr
+            },
+            'default file': {
+                'level': 'DEBUG',
+                'formatter': 'standard',
+                'class': 'logging.handlers.RotatingFileHandler',
+                'filename': logfile,
+                'maxBytes': 0,
+                'backupCount': 0
+            },
+            'state stream': {
+                'level': 'DEBUG',
+                'formatter': 'state machine',
+                'class': 'logging.StreamHandler',
+                'stream': 'ext://sys.stdout',  # Default is stderr
+            },
+            'state file': {
+                'level': 'DEBUG',
+                'formatter': 'state machine',
+                'class': 'logging.handlers.RotatingFileHandler',
+                'filename': logfile,
+                'maxBytes': 0,
+                'backupCount': 0
+            }
+
+        },
+        'loggers': {  # This is where we configure each module for logging
+            '': {  # root logger
+                'handlers': ['default stream', 'default file'],
+                'level': 'DEBUG',
+                'propagate': False
+            },
+            'application.application': {
+                'handlers': ['state stream', 'state file'],
+                'level': 'DEBUG',
+                'propagate': False
+            },
+            '__main__': {  # if __name__ == '__main__'
+                'handlers': ['default stream', 'default file'],
+                'level': 'DEBUG',
+                'propagate': False
+            },
+        },
+    }
+
+    logging.config.dictConfig(LOGGING_CONFIG)
 
 
 # pyinstaller --onefile --windowed --icon=app.ico easyapplybot.py
@@ -52,6 +130,8 @@ class EasyApplyBot:
         self.wait = WebDriverWait(self.browser, 30)
         self.blacklist = blacklist
         self.start_linkedin(username, password)
+        self.current_location =''
+        self.current_position = ''
 
 
     def get_appliedIDs(self, filename):
@@ -116,6 +196,8 @@ class EasyApplyBot:
             combo = (position, location)
             if combo not in combos:
                 combos.append(combo)
+                self.current_location = location
+                self.current_position = position
                 log.info(f"Applying to {position}: {location}")
                 location = "&location=" + location
                 self.applications_loop(position, location)
@@ -258,7 +340,7 @@ class EasyApplyBot:
         job = re_extract(browserTitle.split(' | ')[0], r"\(?\d?\)?\s?(\w.*)")
         company = re_extract(browserTitle.split(' | ')[1], r"(\w.*)" )
 
-        toWrite = [timestamp, jobID, job, company, attempted, result, ('https://www.linkedin.com/jobs/view/'+ str(jobID) + '/')]
+        toWrite = [timestamp, self.current_position, self.current_location, jobID, job, company, attempted, result, ('https://www.linkedin.com/jobs/view/'+ str(jobID) + '/')]
         with open(self.filename,'a') as f:
             writer = csv.writer(f)
             writer.writerow(toWrite)
@@ -350,25 +432,10 @@ class EasyApplyBot:
         self.browser.close()
 
 
-def setupLogger():
-    dt = datetime.strftime(datetime.now(), "%m_%d_%y %H_%M_%S ")
-
-    if not os.path.isdir('./logs'):
-        os.mkdir('./logs')
-
-    # TODO need to check if there is a log dir available or not
-    logging.basicConfig(filename=('./logs/' + str(dt)+'applyJobs.log'), filemode='w', format='%(asctime)s::%(name)s::%(levelname)s::%(message)s', datefmt='./logs/%d-%b-%y %H:%M:%S')
-    log.setLevel(logging.INFO)
-    c_handler = logging.StreamHandler()
-    c_handler.setLevel(logging.INFO)
-    c_format = logging.Formatter('%(asctime)s::%(name)s::%(levelname)s::%(lineno)d- %(message)s')
-    c_handler.setFormatter(c_format)
-    log.addHandler(c_handler)
-
-
 if __name__ == '__main__':
 
-    setupLogger()
+    setup_loggers()
+    log = logging.getLogger(__name__)
 
     with open("config.yaml", 'r') as stream:
         try:
@@ -389,7 +456,7 @@ if __name__ == '__main__':
 
     # Prepare header for CSV file
     if not os.path.exists('./'+output_filename):
-        toWrite = ['timestamp', 'jobID', 'job', 'company', 'attempted', 'success', 'joburl']
+        toWrite = ['timestamp', 'position','location', 'jobID', 'job', 'company', 'attempted', 'success', 'joburl']
         with open(output_filename, 'a') as f:
             writer = csv.writer(f)
             writer.writerow(toWrite)
